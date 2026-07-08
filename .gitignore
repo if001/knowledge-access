@@ -1,0 +1,8 @@
+/.agent-shell/
+.env
+.env.*
+lib/
+docs/
+node_modules/
+drizzle/
+packages/
