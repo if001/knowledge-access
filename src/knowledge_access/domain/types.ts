@@ -23,6 +23,20 @@ export interface SearchKnowledgeOptions {
   minScore?: number;
 }
 
+export interface KnowledgeCatalog {
+  status: "available" | "empty" | "unavailable";
+  available: boolean;
+  topics: string[];
+  updatedAt?: string;
+  reason?: string;
+}
+
+export interface KnowledgeCatalogSourceItem {
+  title: string;
+  tags: string[];
+  updatedAt: Date;
+}
+
 export interface WebListItem {
   rank: number;
   title: string;
@@ -38,13 +52,18 @@ export interface WebPage {
 }
 
 export interface KnowledgeRepository {
-  saveArticle(article: Omit<SavedArticle, "id" | "createdAt">): Promise<SavedArticle>;
+  saveArticle(
+    article: Omit<SavedArticle, "id" | "createdAt">,
+  ): Promise<SavedArticle>;
   getSavedArticleById(articleId: string): Promise<SavedArticle | null>;
   getSavedArticleByUrl(url: string): Promise<SavedArticle | null>;
   searchSavedKnowledge(
     query: string,
     options?: SearchKnowledgeOptions,
   ): Promise<SearchResultItem[]>;
+  listKnowledgeCatalogItems(
+    limit: number,
+  ): Promise<KnowledgeCatalogSourceItem[]>;
 }
 
 export interface WebClient {
@@ -63,6 +82,7 @@ export interface KnowledgeAccessAnalysisModel {
 }
 
 export interface KnowledgeAccessService {
+  inspectCatalog(): Promise<KnowledgeCatalog>;
   searchSavedKnowledge(input: {
     query: string;
     limit?: number;

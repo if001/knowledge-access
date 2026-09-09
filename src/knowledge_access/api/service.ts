@@ -2,6 +2,7 @@ import { analyzeArticle } from "../application/analyzeArticle";
 import {
   KnowledgeAccessAnalysisModel,
   KnowledgeAccessService,
+  KnowledgeCatalog,
   KnowledgeRepository,
   WebClient,
 } from "../domain/types";
@@ -14,6 +15,42 @@ export interface KnowledgeAccessServiceOptions {
 
 class DefaultKnowledgeAccessService implements KnowledgeAccessService {
   constructor(private readonly options: KnowledgeAccessServiceOptions) {}
+
+  async inspectCatalog(): Promise<KnowledgeCatalog> {
+    try {
+      const items =
+        await this.options.repository.listKnowledgeCatalogItems(100);
+      const topics = [
+        ...new Set(
+          items
+            .flatMap((item) => [item.title, ...item.tags])
+            .map(formatCatalogTopic)
+            .filter(Boolean),
+        ),
+      ].slice(0, 5);
+      if (topics.length === 0) {
+        return { status: "empty", available: false, topics: [] };
+      }
+      const updatedAt = items
+        .map((item) => item.updatedAt.toISOString())
+        .sort()
+        .at(-1);
+      return {
+        status: "available",
+        available: true,
+        topics,
+        ...(updatedAt ? { updatedAt } : {}),
+      };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        available: false,
+        topics: [],
+        reason:
+          error instanceof Error ? error.message : "Knowledge catalog failed",
+      };
+    }
+  }
 
   async searchSavedKnowledge(input: {
     query: string;
@@ -77,6 +114,11 @@ class DefaultKnowledgeAccessService implements KnowledgeAccessService {
     };
   }
 }
+
+const formatCatalogTopic = (value: string): string => {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= 80 ? normalized : `${normalized.slice(0, 79)}…`;
+};
 
 export const createKnowledgeAccessService = (
   options: KnowledgeAccessServiceOptions,
