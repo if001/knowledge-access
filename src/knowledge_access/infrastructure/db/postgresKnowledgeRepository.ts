@@ -1,10 +1,11 @@
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   KnowledgeRepository,
   SavedArticle,
   SearchKnowledgeOptions,
   SearchResultItem,
+  KnowledgeCatalogSourceItem,
 } from "../../domain/types";
 import { articlesTable } from "./schema";
 
@@ -125,6 +126,21 @@ export class PostgresKnowledgeRepository implements KnowledgeRepository {
       tags: row.tags,
       url: row.url,
     }));
+  }
+
+  async listKnowledgeCatalogItems(
+    limit: number,
+  ): Promise<KnowledgeCatalogSourceItem[]> {
+    const rows = await this.db
+      .select({
+        title: articlesTable.title,
+        tags: articlesTable.tags,
+        updatedAt: articlesTable.createdAt,
+      })
+      .from(articlesTable)
+      .orderBy(desc(articlesTable.createdAt))
+      .limit(limit);
+    return rows.map((row) => ({ ...row, updatedAt: new Date(row.updatedAt) }));
   }
 }
 
