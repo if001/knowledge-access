@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { cosineDistance, desc, eq, gte, sql } from "drizzle-orm";
 import { NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   KnowledgeRepository,
@@ -11,15 +11,6 @@ import { articlesTable } from "./schema";
 
 export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
-}
-
-interface SearchRow {
-  id: string;
-  url: string;
-  title: string;
-  summary: string;
-  tags: string[];
-  score: number;
 }
 
 export class PostgresKnowledgeRepository implements KnowledgeRepository {
@@ -36,45 +27,35 @@ export class PostgresKnowledgeRepository implements KnowledgeRepository {
     );
     const id = `article_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-    const result = await this.db.execute(
-      sql`
-      INSERT INTO articles (id, url, title, summary, content, tags, raw_markdown, embedding)
-      VALUES (
-        ${id},
-        ${article.url},
-        ${article.title},
-        ${article.summary},
-        ${article.content},
-        ${toTextArraySql(article.tags)},
-        ${article.rawMarkdown},
-        ${toVectorLiteral(embedding)}::vector
-      )
-      ON CONFLICT (url) DO UPDATE SET
-        title = EXCLUDED.title,
-        summary = EXCLUDED.summary,
-        content = EXCLUDED.content,
-        tags = EXCLUDED.tags,
-        raw_markdown = EXCLUDED.raw_markdown,
-        embedding = EXCLUDED.embedding
-      RETURNING
+    const [row] = await this.db
+      .insert(articlesTable)
+      .values({
         id,
-        url,
-        title,
-        summary,
-        content,
-        tags,
-        raw_markdown as "rawMarkdown",
-        created_at as "createdAt"
-      `,
-    );
-    const row = result.rows[0] as unknown as SavedArticle | undefined;
-    if (!row) {
+        url: article.url,
+        title: article.title,
+        summary: article.summary,
+        content: article.content,
+        tags: article.tags,
+        rawMarkdown: article.rawMarkdown,
+        embedding,
+      })
+      .onConflictDoUpdate({
+        target: articlesTable.url,
+        set: {
+          title: article.title,
+          summary: article.summary,
+          content: article.content,
+          tags: article.tags,
+          rawMarkdown: article.rawMarkdown,
+          embedding,
+        },
+      })
+      .returning();
+    const saved = mapSavedArticle(row);
+    if (!saved) {
       throw new Error("Failed to save article");
     }
-    return {
-      ...row,
-      createdAt: new Date(row.createdAt),
-    };
+    return saved;
   }
 
   async getSavedArticleById(articleId: string): Promise<SavedArticle | null> {
@@ -102,23 +83,23 @@ export class PostgresKnowledgeRepository implements KnowledgeRepository {
     const embedding = await this.embeddingProvider.embed(query);
     const limit = options?.limit ?? 10;
     const minScore = options?.minScore ?? 0;
-    const result = await this.db.execute(
-      sql`
-      SELECT
-        id,
-        url,
-        title,
-        summary,
-        tags,
-        1 - (embedding <=> ${toVectorLiteral(embedding)}::vector) AS score
-      FROM articles
-      WHERE ${minScore} <= 1 - (embedding <=> ${toVectorLiteral(embedding)}::vector)
-      ORDER BY embedding <=> ${toVectorLiteral(embedding)}::vector
-      LIMIT ${limit}
-      `,
-    );
+    const distance = cosineDistance(articlesTable.embedding, embedding);
+    const score = sql<number>`1 - (${distance})`;
+    const rows = await this.db
+      .select({
+        id: articlesTable.id,
+        url: articlesTable.url,
+        title: articlesTable.title,
+        summary: articlesTable.summary,
+        tags: articlesTable.tags,
+        score,
+      })
+      .from(articlesTable)
+      .where(gte(score, minScore))
+      .orderBy(distance)
+      .limit(limit);
 
-    return (result.rows as unknown as SearchRow[]).map((row) => ({
+    return rows.map((row) => ({
       articleId: row.id,
       score: row.score,
       title: row.title,
@@ -143,15 +124,6 @@ export class PostgresKnowledgeRepository implements KnowledgeRepository {
     return rows.map((row) => ({ ...row, updatedAt: new Date(row.updatedAt) }));
   }
 }
-
-const toVectorLiteral = (values: number[]): string => `[${values.join(",")}]`;
-
-const toTextArraySql = (values: string[]) => {
-  if (values.length === 0) {
-    return sql`ARRAY[]::text[]`;
-  }
-  return sql`ARRAY[${sql.join(values.map((value) => sql`${value}`), sql`, `)}]::text[]`;
-};
 
 const mapSavedArticle = (
   row: typeof articlesTable.$inferSelect | undefined,
